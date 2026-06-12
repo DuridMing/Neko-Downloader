@@ -1,0 +1,30 @@
+# systemd unit 範本 — 由 scripts/install-service.sh 代入實際路徑與使用者後安裝。
+# 手動安裝：把 @PROJECT_DIR@ / @RUN_USER@ 換成實際值，
+# 複製到 /etc/systemd/system/neko-downloader.service 後 systemctl enable --now。
+
+[Unit]
+Description=Neko Downloader - web video downloader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=exec
+User=@RUN_USER@
+WorkingDirectory=@PROJECT_DIR@
+ExecStart=@PROJECT_DIR@/scripts/start.sh
+Restart=on-failure
+RestartSec=5
+
+# 私有 /tmp + 在預設暫存路徑掛 RAM tmpfs（等同 docker 版的 tmpfs，落實「不儲存檔案」）
+# 若在 .env 自訂了 TMP_DIR，請同步修改下面的路徑
+PrivateTmp=yes
+TemporaryFileSystem=/tmp/neko_dl:size=4g
+
+# 基本沙箱（審查日誌目錄例外開放寫入）
+NoNewPrivileges=yes
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=@PROJECT_DIR@/backend/logs
+
+[Install]
+WantedBy=multi-user.target

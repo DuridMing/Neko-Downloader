@@ -1,0 +1,17 @@
+# local config (use .env.example / config.example.json as templates)
+.env
+config.json
+
+# dependencies / build artifacts
+node_modules/
+.venv/
+__pycache__/
+backend/static/
+
+# runtime data
+logs/
+cookies.txt
+
+# misc
+*.log
+.DS_Store

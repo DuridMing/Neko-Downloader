@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#161b22"/>
+  <!-- ears -->
+  <path d="M15 27 L10 7 L28 15 Z" fill="#7c6cf0"/>
+  <path d="M49 27 L54 7 L36 15 Z" fill="#7c6cf0"/>
+  <path d="M16.5 23 L14 12.5 L23.5 16.8 Z" fill="#161b22"/>
+  <path d="M47.5 23 L50 12.5 L40.5 16.8 Z" fill="#161b22"/>
+  <!-- head -->
+  <circle cx="32" cy="37" r="20" fill="#7c6cf0"/>
+  <!-- eyes -->
+  <ellipse cx="24.5" cy="34" rx="2.6" ry="3.6" fill="#0d1117"/>
+  <ellipse cx="39.5" cy="34" rx="2.6" ry="3.6" fill="#0d1117"/>
+  <!-- nose + mouth -->
+  <path d="M29.4 42 h5.2 l-2.6 3.4 z" fill="#0d1117"/>
+  <path d="M32 45.4 v2.2 m0 0 c-1.5 2.4 -4.5 2.4 -6 .6 m6 -.6 c1.5 2.4 4.5 2.4 6 .6"
+        stroke="#0d1117" stroke-width="1.6" fill="none" stroke-linecap="round"/>
+  <!-- whiskers -->
+  <g stroke="#e6edf3" stroke-width="1.6" stroke-linecap="round">
+    <line x1="4" y1="38" x2="13" y2="39.5"/>
+    <line x1="4" y1="45" x2="13" y2="43.5"/>
+    <line x1="60" y1="38" x2="51" y2="39.5"/>
+    <line x1="60" y1="45" x2="51" y2="43.5"/>
+  </g>
+</svg>

@@ -1,0 +1,18 @@
+services:
+  neko-downloader:
+    build: .
+    ports:
+      - "${PORT:-8000}:${PORT:-8000}"
+    # Settings come from .env at the project root (cp .env.example .env);
+    # without one, the defaults baked into the image apply.
+    env_file:
+      - path: .env
+        required: false
+    # Audit log persists on the host for later review (logs/audit.log).
+    volumes:
+      - ./logs:/srv/logs
+    # tmpfs keeps temp downloads in RAM only — nothing ever touches disk.
+    # Size it to fit your largest expected video x MAX_CONCURRENT.
+    tmpfs:
+      - /tmp/neko_dl:size=4g
+    restart: unless-stopped

@@ -1,0 +1,39 @@
+# macvlan 版本：容器直接取得區網 IP，像一台獨立主機一樣被內網存取。
+# 使用方式：
+#   1. 在 .env 設定 MACVLAN_* 變數（見 .env.example）
+#   2. docker compose -f docker-compose.macvlan.yml up --build -d
+#   3. 以 http://<MACVLAN_IP>:<PORT> 存取（不需要 port mapping）
+#
+# 注意：macvlan 的先天限制是「宿主機本身無法直接連到容器 IP」，
+# 請從區網其他裝置存取；需要宿主機也能連的話，得另外在宿主機建 macvlan bridge。
+
+services:
+  neko-downloader:
+    build: .
+    # Settings come from .env at the project root (cp .env.example .env);
+    # without one, the defaults baked into the image apply.
+    env_file:
+      - path: .env
+        required: false
+    networks:
+      lan:
+        ipv4_address: ${MACVLAN_IP:-192.168.1.50}
+    # Audit log persists on the host for later review (logs/audit.log).
+    volumes:
+      - ./logs:/srv/logs
+    # tmpfs keeps temp downloads in RAM only — nothing ever touches disk.
+    # Size it to fit your largest expected video x MAX_CONCURRENT.
+    tmpfs:
+      - /tmp/neko_dl:size=4g
+    restart: unless-stopped
+
+networks:
+  lan:
+    driver: macvlan
+    driver_opts:
+      # 實體網卡名稱（ip link 查詢，常見：eth0、enp3s0、eno1）
+      parent: ${MACVLAN_PARENT:-eth0}
+    ipam:
+      config:
+        - subnet: ${MACVLAN_SUBNET:-192.168.1.0/24}
+          gateway: ${MACVLAN_GATEWAY:-192.168.1.1}
