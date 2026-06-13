@@ -70,6 +70,7 @@ class JobQueue:
             self._cancel_flags.add(job_id)
             if job.status == JobStatus.QUEUED:
                 job.status = JobStatus.CANCELLED
+                job.completed_at = datetime.now(timezone.utc)
                 await self._broadcast(job)
         else:
             # Terminal or ready job: remove it entirely (and its file).
@@ -154,7 +155,7 @@ class JobQueue:
                 except Exception as exc:
                     if job.id in self._cancel_flags:
                         raise CancelledByUser() from exc
-                    logger.warning("Job %s: handler %s failed: %s", job.id, handler.name, exc)
+                    logger.info("Job %s: handler %s failed: %s", job.id, handler.name, exc)
                     audit("handler_failed", job.id, handler=handler.name, error=str(exc)[:200])
                     errors.append(f"[{handler.name}] {str(exc)[:200]}")
             if result is None:
@@ -179,12 +180,14 @@ class JobQueue:
             )
         except CancelledByUser:
             job.status = JobStatus.CANCELLED
+            job.completed_at = datetime.now(timezone.utc)
             self._delete_files(job)
             audit("job_cancelled", job.id, url=job.url)
         except Exception as exc:
             logger.error("Job %s failed: %s", job.id, exc)
             job.status = JobStatus.FAILED
             job.error = str(exc)[:500]
+            job.completed_at = datetime.now(timezone.utc)
             self._delete_files(job)
             audit("job_failed", job.id, url=job.url, error=job.error)
         finally:
@@ -203,6 +206,11 @@ class JobQueue:
         job.progress = event.get("progress", job.progress)
         job.speed = event.get("speed")
         job.eta = event.get("eta")
+        job.downloaded = event.get("downloaded")
+        # Populate filesize from yt-dlp's total-bytes estimate so the frontend
+        # can show "X / Y" before the real size is known at completion.
+        if event.get("total") and not job.filesize:
+            job.filesize = event.get("total")
         if self._loop:
             self._loop.create_task(self._broadcast(job))
 
@@ -213,14 +221,19 @@ class JobQueue:
             await asyncio.sleep(settings.cleanup_interval_seconds)
             now = datetime.now(timezone.utc)
             for job in list(self.jobs.values()):
-                if job.status == JobStatus.READY and job.completed_at:
-                    age = (now - job.completed_at).total_seconds()
-                    if age > settings.file_ttl_seconds:
-                        job.status = JobStatus.EXPIRED
-                        self._delete_files(job)
-                        job.file_path = None
-                        audit("job_expired", job.id, url=job.url, filename=job.filename)
-                        await self._broadcast(job)
+                if not job.completed_at:
+                    continue
+                age = (now - job.completed_at).total_seconds()
+                if age <= settings.file_ttl_seconds:
+                    continue
+                # READY: delete the file and emit an audit event before removal.
+                if job.status == JobStatus.READY:
+                    self._delete_files(job)
+                    audit("job_expired", job.id, url=job.url, filename=job.filename)
+                # All terminal jobs (ready/done/failed/cancelled) disappear from
+                # the queue after TTL so the list stays clean.
+                del self.jobs[job.id]
+                await ws_manager.broadcast({"type": "job_removed", "id": job.id})
 
     def _delete_files(self, job: Job) -> None:
         job_dir = Path(settings.tmp_dir) / job.id

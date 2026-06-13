@@ -32,7 +32,7 @@ const { connected } = useWebSocket()
     </main>
 
     <footer class="max-w-3xl mx-auto px-6 pb-8 text-center text-xs text-gray-600">
-      內部工具 · 檔案僅暫存於記憶體，下載後即清除
+      內部工具 · 檔案暫存於記憶體，下載後或 1 小時後自動清除
     </footer>
   </div>
 </template>

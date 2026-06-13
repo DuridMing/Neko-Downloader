@@ -17,13 +17,21 @@ const STATUS_META = {
 const meta = computed(() => STATUS_META[props.job.status] ?? STATUS_META.queued)
 const isActive = computed(() => ['downloading', 'processing'].includes(props.job.status))
 
-const sizeText = computed(() => {
-  const b = props.job.filesize
+function formatBytes(b) {
   if (!b) return null
   const units = ['B', 'KB', 'MB', 'GB']
   let v = b, i = 0
   while (v >= 1024 && i < units.length - 1) { v /= 1024; i++ }
   return `${v.toFixed(1)} ${units[i]}`
+}
+
+const sizeText = computed(() => formatBytes(props.job.filesize))
+
+const downloadedText = computed(() => {
+  const dl = formatBytes(props.job.downloaded)
+  if (!dl) return null
+  const total = formatBytes(props.job.filesize)
+  return total ? `${dl} / ${total}` : dl
 })
 
 async function remove() {
@@ -56,9 +64,15 @@ async function remove() {
           :style="{ width: `${job.progress || 2}%` }"
         ></div>
       </div>
-      <div class="flex justify-between text-xs text-gray-500 mt-1.5">
-        <span>{{ (job.progress ?? 0).toFixed(1) }}%</span>
-        <span v-if="job.speed">{{ job.speed }} · 剩餘 {{ job.eta || '–' }}</span>
+      <div class="flex justify-between text-xs mt-1.5">
+        <span class="text-gray-400">
+          {{ (job.progress ?? 0).toFixed(1) }}%
+          <span v-if="downloadedText" class="text-gray-500"> · {{ downloadedText }}</span>
+        </span>
+        <span v-if="job.speed">
+          <span class="text-emerald-400">{{ job.speed }}</span>
+          <span class="text-sky-400"> · 剩餘 {{ job.eta || '–' }}</span>
+        </span>
       </div>
     </div>
 

@@ -1,9 +1,12 @@
 """Shared yt-dlp plumbing reusable by any handler built on yt-dlp."""
 
+import re
 from pathlib import Path
 from urllib.parse import urlparse
 
 import yt_dlp
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 from ..config import settings
 from ..models import DownloadContext, DownloadResult, Job
@@ -90,8 +93,10 @@ def run_ytdlp(
                 {
                     "status": "downloading",
                     "progress": round(downloaded / total * 100, 1) if total else 0.0,
-                    "speed": d.get("_speed_str", "").strip() or None,
-                    "eta": d.get("_eta_str", "").strip() or None,
+                    "speed": _ANSI_RE.sub("", d.get("_speed_str", "")).strip() or None,
+                    "eta": _ANSI_RE.sub("", d.get("_eta_str", "")).strip() or None,
+                    "downloaded": downloaded or None,
+                    "total": total or None,
                 }
             )
         elif d["status"] == "finished":
@@ -104,6 +109,7 @@ def run_ytdlp(
         "noplaylist": True,
         "http_headers": ctx.headers,
         "progress_hooks": [progress_hook],
+        "extractor_args": {"generic": {"impersonate": [""]}},
         "retries": 5,
         "fragment_retries": 10,
         "socket_timeout": 30,

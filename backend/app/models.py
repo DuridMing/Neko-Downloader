@@ -42,6 +42,7 @@ class Job(BaseModel):
     title: Optional[str] = None
     filename: Optional[str] = None
     filesize: Optional[int] = None
+    downloaded: Optional[int] = None
     error: Optional[str] = None
     created_at: datetime
     completed_at: Optional[datetime] = None

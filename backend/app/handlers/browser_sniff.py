@@ -92,10 +92,27 @@ class BrowserSniffHandler(DownloadHandler):
         with sync_playwright() as p:
             browser = p.chromium.launch(
                 headless=True,
-                args=["--autoplay-policy=no-user-gesture-required", "--mute-audio"],
+                args=[
+                    "--autoplay-policy=no-user-gesture-required",
+                    "--mute-audio",
+                    # Prevents Chromium from advertising automation to bot-detection.
+                    "--disable-blink-features=AutomationControlled",
+                ],
             )
             try:
-                page = browser.new_context(viewport={"width": 1280, "height": 720}).new_page()
+                context = browser.new_context(
+                    viewport={"width": 1280, "height": 720},
+                    user_agent=(
+                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                    ),
+                )
+                page = context.new_page()
+                # Remove the webdriver property that Cloudflare and similar
+                # services check to confirm a real browser is in use.
+                page.add_init_script(
+                    "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+                )
                 page.on("request", on_request)
                 page.on("response", on_response)
                 page.goto(job.url, wait_until="domcontentloaded", timeout=30_000)

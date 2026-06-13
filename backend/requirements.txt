@@ -3,3 +3,4 @@ uvicorn[standard]>=0.30
 yt-dlp>=2025.1.1
 pydantic-settings>=2.2
 playwright>=1.45
+curl-cffi>=0.7

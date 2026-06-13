@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     tmp_dir: str = "/tmp/neko_dl"
     max_concurrent: int = 2
     max_queue_size: int = 50
-    file_ttl_seconds: int = 1800
+    file_ttl_seconds: int = 3600
     cleanup_interval_seconds: int = 60
     sniff_timeout_seconds: int = 20
     # Netscape-format cookies file passed to yt-dlp; needed for

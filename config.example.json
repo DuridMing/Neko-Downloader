@@ -1,7 +1,7 @@
 {
   "max_concurrent": 2,
   "max_queue_size": 50,
-  "file_ttl_seconds": 1800,
+  "file_ttl_seconds": 3600,
   "cleanup_interval_seconds": 60,
   "sniff_timeout_seconds": 20,
   "cookies_file": "",
