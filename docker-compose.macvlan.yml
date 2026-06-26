@@ -18,13 +18,14 @@ services:
     networks:
       lan:
         ipv4_address: ${MACVLAN_IP:-192.168.1.50}
-    # Audit log persists on the host for later review (logs/audit.log).
+    # Temp downloads spill to disk (not RAM) so multi-GB / long videos fit.
+    # Host /var/tmp is disk-backed and auto-purged by Rocky's systemd-tmpfiles
+    # (30d backstop); the app also deletes on fetch / TTL / failure and wipes
+    # on startup. :Z relabels for SELinux (rootless Podman). Make sure /var/tmp
+    # has room for largest video x2 (remux peak) x MAX_CONCURRENT.
     volumes:
-      - ./logs:/srv/logs
-    # tmpfs keeps temp downloads in RAM only — nothing ever touches disk.
-    # Size it to fit your largest expected video x MAX_CONCURRENT.
-    tmpfs:
-      - /tmp/neko_dl:size=4g
+      - ./logs:/srv/logs:Z
+      - /var/tmp/neko_dl:/tmp/neko_dl:Z
     restart: unless-stopped
 
 networks:

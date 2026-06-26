@@ -58,6 +58,23 @@ async def cancel_job(job_id: str, request: Request):
     return {"ok": True}
 
 
+@router.post("/api/jobs/{job_id}/select")
+async def select_candidate(job_id: str, payload: dict, request: Request):
+    index = payload.get("index")
+    if not isinstance(index, int):
+        raise HTTPException(status_code=422, detail="index must be an integer")
+    try:
+        job = await job_queue.select(job_id, index)
+    except IndexError:
+        raise HTTPException(status_code=422, detail="index out of range")
+    except asyncio.QueueFull:
+        raise HTTPException(status_code=429, detail="Queue is full, try again later")
+    if job is None:
+        raise HTTPException(status_code=409, detail="Job is not awaiting selection")
+    audit("job_candidate_selected", job_id, url=job.url, index=index)
+    return job.public_dict()
+
+
 @router.get("/api/jobs/{job_id}/download")
 async def download_job(job_id: str, request: Request):
     job = job_queue.jobs.get(job_id)

@@ -1,6 +1,7 @@
 """Shared yt-dlp plumbing reusable by any handler built on yt-dlp."""
 
 import re
+from collections import deque
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -10,6 +11,32 @@ _ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 from ..config import settings
 from ..models import DownloadContext, DownloadResult, Job
+
+# Single recent-Chrome UA shared by yt-dlp requests and the browser sniffer so
+# the two never disagree (a mismatch is itself a bot tell).
+BROWSER_UA = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
+
+
+def _default_impersonate():
+    """Best available curl_cffi Chrome TLS/HTTP2 fingerprint, or None if the
+    optional curl_cffi dependency is missing (then yt-dlp uses plain urllib)."""
+    try:
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+
+        ydl = yt_dlp.YoutubeDL({"quiet": True, "no_warnings": True})
+        if ydl._get_available_impersonate_targets():
+            return ImpersonateTarget.from_str("chrome")
+    except Exception:
+        pass
+    return None
+
+
+# Resolved once at import: impersonating a real browser's TLS handshake defeats
+# JA3/fingerprint-based bot blocks (Cloudflare et al.) that a bare client trips.
+IMPERSONATE_TARGET = _default_impersonate()
 
 
 def derive_stream_headers(url: str, referer: str | None = None) -> dict[str, str]:
@@ -22,10 +49,9 @@ def derive_stream_headers(url: str, referer: str | None = None) -> dict[str, str
     return {
         "Origin": origin,
         "Referer": referer or f"{origin}/",
-        "User-Agent": (
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
-            "(KHTML, like Gecko) Chrome/124.0 Safari/537.36"
-        ),
+        "User-Agent": BROWSER_UA,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Mode": "cors",
     }
 
 
@@ -72,6 +98,41 @@ def cookie_opts(cookiefile: Path | None = None) -> dict:
     return {}
 
 
+class _ErrorCapture:
+    """Buffers yt-dlp/ffmpeg output so a generic failure can be explained.
+
+    yt-dlp's ffmpeg postprocessor raises with only the *last* line of ffmpeg
+    stderr (usually the useless "Conversion failed!"); the real cause (e.g.
+    "No space left on device") is dumped via write_debug, which is a no-op
+    unless verbose + a logger are set. We buffer the tail and append it to the
+    raised error so failures are diagnosable.
+    """
+
+    def __init__(self) -> None:
+        self.lines: deque[str] = deque(maxlen=80)
+
+    def debug(self, msg: str) -> None:
+        self.lines.append(msg)
+
+    def info(self, msg: str) -> None:  # progress noise; ignore
+        pass
+
+    def warning(self, msg: str) -> None:
+        self.lines.append(msg)
+
+    def error(self, msg: str) -> None:
+        self.lines.append(msg)
+
+    def tail(self, n: int = 6) -> str:
+        # Flatten (the ffmpeg stderr arrives as one multi-line entry) and keep
+        # the last n lines — the real cause sits just above "Conversion failed!".
+        flat: list[str] = []
+        for entry in self.lines:
+            flat.extend(str(entry).splitlines())
+        meaningful = [ln for ln in flat if ln.strip() and not ln.startswith("[debug] ")]
+        return "\n".join(meaningful[-n:]).strip()
+
+
 def run_ytdlp(
     job: Job,
     ctx: DownloadContext,
@@ -109,31 +170,42 @@ def run_ytdlp(
         "noplaylist": True,
         "http_headers": ctx.headers,
         "progress_hooks": [progress_hook],
-        "extractor_args": {"generic": {"impersonate": [""]}},
         "retries": 5,
         "fragment_retries": 10,
         "socket_timeout": 30,
-        "quiet": True,
+        # verbose + logger route ffmpeg stderr into errlog so postprocessing
+        # failures carry their real cause; logger keeps it off the screen.
+        "verbose": True,
         "no_warnings": True,
         "noprogress": True,
     }
+    errlog = _ErrorCapture()
+    opts["logger"] = errlog
+    if IMPERSONATE_TARGET is not None:
+        opts["impersonate"] = IMPERSONATE_TARGET
     opts.update(cookie_opts(ctx.cookiefile))
     if extra_opts:
         opts.update(extra_opts)
 
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(url or job.url, download=True)
-        if "entries" in info:
-            info = info["entries"][0]
-        file_path = Path(ydl.prepare_filename(info))
-        # After merge the extension may differ from prepare_filename's guess.
-        if not file_path.exists():
-            candidates = sorted(
-                ctx.output_dir.glob("*"), key=lambda p: p.stat().st_size, reverse=True
-            )
-            if not candidates:
-                raise RuntimeError("Download produced no output file")
-            file_path = candidates[0]
+    try:
+        with yt_dlp.YoutubeDL(opts) as ydl:
+            info = ydl.extract_info(url or job.url, download=True)
+            if "entries" in info:
+                info = info["entries"][0]
+            file_path = Path(ydl.prepare_filename(info))
+            # After merge the extension may differ from prepare_filename's guess.
+            if not file_path.exists():
+                candidates = sorted(
+                    ctx.output_dir.glob("*"), key=lambda p: p.stat().st_size, reverse=True
+                )
+                if not candidates:
+                    raise RuntimeError("Download produced no output file")
+                file_path = candidates[0]
+    except Exception as exc:
+        detail = errlog.tail()
+        if detail and str(exc) not in detail:
+            raise RuntimeError(f"{exc}\n--- ffmpeg/yt-dlp output ---\n{detail}") from exc
+        raise
 
     return DownloadResult(
         file_path=file_path,

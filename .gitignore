@@ -16,3 +16,5 @@ cookies.txt
 *.log
 .DS_Store
 CLAUDE.md
+tests/
+test/

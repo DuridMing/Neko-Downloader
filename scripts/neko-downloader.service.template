@@ -15,10 +15,11 @@ ExecStart=@PROJECT_DIR@/scripts/start.sh
 Restart=on-failure
 RestartSec=5
 
-# 私有 /tmp + 在預設暫存路徑掛 RAM tmpfs（等同 docker 版的 tmpfs，落實「不儲存檔案」）
-# 若在 .env 自訂了 TMP_DIR，請同步修改下面的路徑
+# 私有 /tmp（磁碟暫存，服務停止即清空）。暫存改放磁碟而非 RAM，長影片/大檔才放得下
+# （ffmpeg remux 尖峰約檔案 2 倍，RAM tmpfs 撐不住 5GB+ 影片）。檔案仍會在取走/逾時/
+# 失敗時刪除，且每次啟動會清空 TMP_DIR。若在 .env 自訂了 TMP_DIR 到 /tmp 以外，需在
+# 下面加對應的 ReadWritePaths。
 PrivateTmp=yes
-TemporaryFileSystem=/tmp/neko_dl:size=4g
 
 # 基本沙箱（審查日誌目錄例外開放寫入）
 NoNewPrivileges=yes

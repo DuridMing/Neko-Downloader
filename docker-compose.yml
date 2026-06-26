@@ -8,11 +8,20 @@ services:
     env_file:
       - path: .env
         required: false
-    # Audit log persists on the host for later review (logs/audit.log).
+    # Temp downloads spill to disk (not RAM) so multi-GB / long videos fit —
+    # a RAM tmpfs can't hold a 5.5GB video whose ffmpeg remux peaks at ~2x.
+    # Host /var/tmp is disk-backed and already auto-purged by Rocky's
+    # systemd-tmpfiles (30d backstop), so a hard-crash leftover gets reaped by
+    # the OS with no extra rule. The app also deletes on fetch / TTL / failure
+    # and wipes this dir on startup, so files normally never linger.
+    # :Z relabels the mounts for SELinux (rootless Podman) — without it the
+    # container can't write. Make sure /var/tmp has room for your largest
+    # video x2 (remux peak) x MAX_CONCURRENT.
     volumes:
-      - ./logs:/srv/logs
-    # tmpfs keeps temp downloads in RAM only — nothing ever touches disk.
-    # Size it to fit your largest expected video x MAX_CONCURRENT.
-    tmpfs:
-      - /tmp/neko_dl:size=4g
+      - ./logs:/srv/logs:Z
+      - /var/tmp/neko_dl:/tmp/neko_dl:Z
+    # RAM-only alternative (only if you have the memory; a 5.5GB video needs
+    # ~12g): drop the /var/tmp line above and uncomment ->
+    #   tmpfs:
+    #     - /tmp/neko_dl:size=12g
     restart: unless-stopped

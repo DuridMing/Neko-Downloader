@@ -8,7 +8,7 @@ from typing import Optional
 from .audit import audit
 from .config import settings
 from .handlers import registry
-from .models import CancelledByUser, DownloadContext, Job, JobStatus
+from .models import CancelledByUser, DownloadContext, Job, JobStatus, NeedsSelection
 from .ws import ws_manager
 
 logger = logging.getLogger("neko.queue")
@@ -36,7 +36,13 @@ class JobQueue:
 
     async def start(self) -> None:
         self._loop = asyncio.get_running_loop()
-        Path(settings.tmp_dir).mkdir(parents=True, exist_ok=True)
+        # Temp is disk-backed (not RAM tmpfs), so it survives a crash/restart.
+        # Wipe leftovers on boot to keep the "restart = clean slate" guarantee
+        # that RAM gave for free. rmtree on a bind-mount point clears its
+        # contents and harmlessly fails to remove the mount itself.
+        tmp = Path(settings.tmp_dir)
+        shutil.rmtree(tmp, ignore_errors=True)
+        tmp.mkdir(parents=True, exist_ok=True)
         for i in range(settings.max_concurrent):
             self._tasks.append(asyncio.create_task(self._worker(i)))
         self._tasks.append(asyncio.create_task(self._cleanup_loop()))
@@ -77,6 +83,25 @@ class JobQueue:
             self._delete_files(job)
             del self.jobs[job_id]
             await ws_manager.broadcast({"type": "job_removed", "id": job_id})
+        return job
+
+    async def select(self, job_id: str, index: int) -> Optional[Job]:
+        """User picked candidate `index`; re-queue the job to download it."""
+        job = self.jobs.get(job_id)
+        if job is None or job.status != JobStatus.NEEDS_SELECTION or not job.candidates:
+            return None
+        if not 0 <= index < len(job.candidates):
+            raise IndexError(index)
+        job.selected = job.candidates[index]
+        job.candidates = None
+        job.status = JobStatus.QUEUED
+        job.progress = 0.0
+        try:
+            self._queue.put_nowait(job.id)
+        except asyncio.QueueFull:
+            job.status = JobStatus.NEEDS_SELECTION
+            raise
+        await self._broadcast(job)
         return job
 
     def mark_done(self, job: Job) -> None:
@@ -140,9 +165,16 @@ class JobQueue:
 
         try:
             result = None
+            needs_selection: Optional[NeedsSelection] = None
             errors: list[str] = []
-            # Fallback chain: try every matching handler in priority order.
-            for handler in registry.resolve_all(job.url):
+            # Resume after user selection: replay only the handler that produced
+            # the candidates (it reads job.selected and downloads directly).
+            if job.selected:
+                handlers = [h for h in registry.resolve_all(job.url) if h.name == job.handler]
+            else:
+                # Fallback chain: try every matching handler in priority order.
+                handlers = registry.resolve_all(job.url)
+            for handler in handlers:
                 job.handler = handler.name
                 job.progress = 0.0
                 job.status = JobStatus.DOWNLOADING
@@ -152,12 +184,28 @@ class JobQueue:
                     break
                 except CancelledByUser:
                     raise
+                except NeedsSelection as ns:
+                    needs_selection = ns
+                    break
                 except Exception as exc:
                     if job.id in self._cancel_flags:
                         raise CancelledByUser() from exc
                     logger.info("Job %s: handler %s failed: %s", job.id, handler.name, exc)
-                    audit("handler_failed", job.id, handler=handler.name, error=str(exc)[:200])
-                    errors.append(f"[{handler.name}] {str(exc)[:200]}")
+                    audit("handler_failed", job.id, handler=handler.name, error=str(exc)[:600])
+                    errors.append(f"[{handler.name}] {str(exc)[:600]}")
+            if needs_selection is not None:
+                # Park the job until the user picks; no completed_at so the
+                # cleanup loop leaves it alone while waiting.
+                job.candidates = needs_selection.candidates
+                job.status = JobStatus.NEEDS_SELECTION
+                job.progress = 0.0
+                audit(
+                    "job_needs_selection",
+                    job.id,
+                    url=job.url,
+                    count=len(needs_selection.candidates),
+                )
+                return
             if result is None:
                 raise RuntimeError(" | ".join(errors) or "no handler matched")
             job.file_path = str(result.file_path)
@@ -186,7 +234,7 @@ class JobQueue:
         except Exception as exc:
             logger.error("Job %s failed: %s", job.id, exc)
             job.status = JobStatus.FAILED
-            job.error = str(exc)[:500]
+            job.error = str(exc)[:1500]
             job.completed_at = datetime.now(timezone.utc)
             self._delete_files(job)
             audit("job_failed", job.id, url=job.url, error=job.error)

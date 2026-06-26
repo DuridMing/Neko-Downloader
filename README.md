@@ -1,6 +1,6 @@
 # 🐱 Neko Downloader
 
-內部使用的網路影片下載工具。貼上一行影片連結，系統自動判斷下載方式 —— 支援原始 `.m3u8` 串流（自動帶上 `Origin` / `Referer` 等標頭）以及 yt-dlp 涵蓋的上千個影音平台。檔案只暫存在記憶體（tmpfs），使用者取走或逾時後立即清除，伺服器不留任何資料。
+內部使用的網路影片下載工具。貼上一行影片連結，系統自動判斷下載方式 —— 支援原始 `.m3u8` 串流（自動帶上 `Origin` / `Referer` 等標頭）以及 yt-dlp 涵蓋的上千個影音平台。檔案只暫存在磁碟上的暫存目錄，使用者取走、逾時或服務重啟後立即清除，伺服器不長期保留任何資料。
 
 > ⚠️ 概念驗證階段的內部工具：無帳號系統、無認證，請勿直接暴露於公開網路。
 
@@ -10,7 +10,8 @@
 - **`.m3u8` (HLS) 支援**：自動推導 `Origin`/`Referer`（可手動覆寫），ffmpeg 合併為 mp4
 - **多平台支援**：YouTube、Facebook、X (Twitter)、TikTok、Bilibili… 凡 yt-dlp 支援的平台皆可；需要登入的內容可透過 `COOKIES_FILE` 帶入瀏覽器 cookies
 - **瀏覽器嗅探回退**：遇到 yt-dlp 不認識的網頁，自動以無頭瀏覽器（Playwright + Chromium）載入頁面、攔截網路流量找出真正的媒體串流（m3u8/mpd/mp4）與其標頭後下載 —— 貼一般網頁連結也能用
-- **零儲存**：下載暫存於 tmpfs（記憶體），使用者取走後或 TTL 逾時自動刪除
+- **反爬蟲規避**：下載一律以真 Chrome 的 TLS/HTTP2 指紋連線（curl_cffi impersonate，過 Cloudflare 等 JA3 指紋封鎖）；嗅探用的無頭瀏覽器會抹除 `navigator.webdriver`、補上 languages/plugins/WebGL 等特徵，降低被 bot 偵測擋下的機率
+- **不長期保留**：下載暫存於磁碟暫存目錄，使用者取走後、TTL 逾時或服務重啟時自動刪除（每次啟動會清空暫存目錄）
 - **佇列系統**：限制並行下載數，WebSocket 即時推送佇列狀態、進度、速度與 ETA
 - **審查日誌**：所有任務事件（提交/完成/取走/失敗…）以 JSON Lines 寫入可輪替的稽核日誌，含來源 IP
 - **現代化介面**：Vue 3 + Tailwind 深色單頁應用，附貓咪 favicon 🐱
@@ -64,7 +65,7 @@ sudo systemctl disable --now neko-downloader
 sudo rm /etc/systemd/system/neko-downloader.service
 ```
 
-設定一樣走 `.env` / `config.json`（見上方「設定」章節）。systemd 版以 `TemporaryFileSystem` 在預設的 `/tmp/neko_dl` 掛了 RAM tmpfs（size=4g），與 Docker 版效果相同；若自訂 `TMP_DIR`，請同步修改 service 範本中的該行，並避開家目錄（服務以 `ProtectHome=read-only` 執行）。
+設定一樣走 `.env` / `config.json`（見上方「設定」章節）。systemd 版以 `PrivateTmp=yes` 給服務一個獨立的 `/tmp`（落在磁碟、服務停止即清空），暫存目錄 `/tmp/neko_dl` 即放在其中；服務啟動時也會主動清空暫存目錄。若自訂 `TMP_DIR` 到 `/tmp` 以外，請在 service 範本補上對應的 `ReadWritePaths`，並避開家目錄（服務以 `ProtectHome=read-only` 執行）。
 
 ## 架構
 
@@ -78,7 +79,7 @@ sudo rm /etc/systemd/system/neko-downloader.service
    │                              ├─ YtDlpPlatformHandler (上千個平台)
    │                              └─ BrowserSniffHandler (無頭瀏覽器嗅探，最後防線)
    │                                          │
-   └◀── GET /api/jobs/{id}/download ◀── tmpfs 暫存（取走/逾時即刪）
+   └◀── GET /api/jobs/{id}/download ◀── 磁碟暫存（取走/逾時/重啟即刪）
 ```
 
 任務狀態機：
@@ -116,10 +117,20 @@ cp config.example.json config.json    # JSON 風格
 | `COOKIES_FILE` / `cookies_file` | （空） | Netscape 格式 cookies 檔，抓需要登入的內容用 |
 | `COOKIES_FROM_BROWSER` / `cookies_from_browser` | （空） | 直接讀本機瀏覽器登入狀態，如 `firefox`、`chrome:Profile 1`（`COOKIES_FILE` 優先） |
 | `AUDIT_LOG_FILE` / `audit_log_file` | `logs/audit.log` | 審查日誌路徑（相對於 `backend/`），空字串停用檔案輸出 |
-| `TMP_DIR` / `tmp_dir` | `/tmp/neko_dl` | 暫存目錄（compose 已掛 tmpfs） |
+| `TMP_DIR` / `tmp_dir` | `/tmp/neko_dl` | 容器內暫存目錄（compose 已把 host `/var/tmp/neko_dl` 掛進來；啟動時會清空） |
 | `PORT` / `port` | `8000` | 服務埠 |
 
-> tmpfs 大小（`docker-compose.yml` 中的 `size=4g`）請依「最大預期影片大小 × MAX_CONCURRENT」調整。
+> **暫存放磁碟，不放 RAM**：早期版本把暫存掛在 tmpfs（記憶體），但長影片放不下 —— 合併成 mp4 的最後一步
+> （ffmpeg remux）會在同一個檔案系統上同時存在「下載檔 + 輸出檔」兩份，尖峰約為檔案的兩倍，一支 5.5GB 影片就要
+> ~12GB，遠超一般機器的 RAM。現在 compose 預設把 host 的 **`/var/tmp/neko_dl`** 掛進容器：`/var/tmp` 是磁碟、
+> 而且 Rocky Linux 的 `systemd-tmpfiles` 本來就會定期清（預設 30 天），所以萬一容器硬當機留下檔案，**作業系統會
+> 自己回收**，不需要額外設定。正常情況下檔案在取走/逾時/失敗時就刪、每次啟動也會清空暫存目錄，根本不會留到 30 天。
+> 請確認 `/var/tmp` 所在磁碟**有足夠空間**：約「最大預期影片大小 **× 2**（remux 尖峰）× MAX_CONCURRENT」。空間不夠時
+> 長影片會在 `processing` 階段失敗、`job.error` 出現 `No space left on device`（ffmpeg 對外只印泛泛的
+> `Conversion failed!`，但真因已一併記到 `job.error` / 審查日誌）。
+>
+> 掛載已加 `:Z`（SELinux relabel）讓 rootless Podman / Rocky 的 SELinux enforcing 下容器寫得進去。若機器 RAM
+> 夠大、堅持用記憶體，compose 裡留有 `tmpfs` 的註解可切換回去。
 
 ### 社群平台（Facebook / X / TikTok）
 
@@ -270,5 +281,5 @@ registry.register(MpdHandler())
 
 - **更新 yt-dlp**：平台網站常改版，下載失敗時先重建 image 取得最新 yt-dlp（`docker compose build --no-cache`）。
 - **Image 體積**：內含 ffmpeg 與無頭 Chromium（瀏覽器嗅探用），image 約 1.5GB；若用不到嗅探功能，可從 `requirements.txt` 移除 `playwright` 並刪掉 Dockerfile 中的 `playwright install` 步驟，系統會自動停用該 handler。
-- **記憶體即儲存**：容器重啟後佇列與暫存檔全部清空（設計如此）。
+- **不長期保留**：佇列存在記憶體、暫存檔放磁碟暫存目錄；容器重啟後佇列清空、暫存目錄也會在啟動時清空（設計如此）。
 - **僅限內部**：無任何認證機制，部署時請置於內網或加上反向代理的存取控制。

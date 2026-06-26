@@ -12,6 +12,9 @@ class JobStatus(str, Enum):
     QUEUED = "queued"
     DOWNLOADING = "downloading"
     PROCESSING = "processing"
+    # Sniffer found several plausible streams and can't tell which is the real
+    # video (ad-heavy pages); waiting for the user to pick one. See candidates.
+    NEEDS_SELECTION = "needs_selection"
     READY = "ready"
     DONE = "done"
     FAILED = "failed"
@@ -47,6 +50,11 @@ class Job(BaseModel):
     created_at: datetime
     completed_at: Optional[datetime] = None
     file_path: Optional[str] = None
+    # Sensitive, in-memory only: candidate streams carry captured request
+    # headers (Referer/Cookie), so public_dict exposes only url/kind/size.
+    # `selected` is the candidate the user picked, replayed on resume.
+    candidates: Optional[list[dict]] = None
+    selected: Optional[dict] = None
 
     @classmethod
     def new(
@@ -66,15 +74,31 @@ class Job(BaseModel):
         )
 
     def public_dict(self) -> dict:
-        """Serializable view sent to clients; never expose file_path or cookies."""
+        """Serializable view sent to clients; never expose file_path, cookies,
+        or candidate request headers (which can contain Referer/Cookie)."""
         data = self.model_dump(mode="json")
         data.pop("file_path", None)
         data.pop("cookies", None)
+        data.pop("selected", None)
+        if self.candidates:
+            data["candidates"] = [
+                {"url": c["url"], "kind": c["kind"], "size": c.get("size")}
+                for c in self.candidates
+            ]
         return data
 
 
 class CancelledByUser(Exception):
     pass
+
+
+class NeedsSelection(Exception):
+    """A handler found multiple plausible streams and needs the user to choose.
+    Carries the full candidate list (with captured headers, kept server-side)."""
+
+    def __init__(self, candidates: list[dict]) -> None:
+        self.candidates = candidates
+        super().__init__(f"{len(candidates)} candidate streams need user selection")
 
 
 @dataclass
