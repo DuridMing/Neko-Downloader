@@ -5,6 +5,7 @@ hand the captured URL to yt-dlp."""
 import logging
 import re
 import time
+from pathlib import Path
 from urllib.parse import urlparse
 
 from playwright.sync_api import sync_playwright
@@ -12,7 +13,7 @@ from playwright.sync_api import sync_playwright
 from ..config import settings
 from ..models import DownloadContext, DownloadResult, Job, NeedsSelection
 from ._hls_png import run_hls
-from ._ytdlp_common import BROWSER_UA, run_ytdlp
+from ._ytdlp_common import BROWSER_UA, cookie_opts, run_ytdlp
 from .base import DownloadHandler
 
 # Patches the navigator properties headless Chromium gives away, which
@@ -105,6 +106,42 @@ def _reg_domain(netloc: str) -> str:
 def _is_ad_host(url: str) -> bool:
     host = urlparse(url).netloc.lower()
     return any(frag in host for frag in AD_HOST_FRAGMENTS)
+
+
+def _cookies_for_playwright(cookiefile: str) -> list[dict]:
+    """Netscape cookies.txt -> Playwright add_cookies() dicts.
+
+    Parsed by hand rather than stdlib MozillaCookieJar because browser exports
+    prefix auth cookies with '#HttpOnly_', which MozillaCookieJar silently
+    drops as comments — and those are exactly the cookies a login wall needs.
+    """
+    cookies = []
+    for line in Path(cookiefile).read_text(encoding="utf-8").splitlines():
+        http_only = line.startswith("#HttpOnly_")
+        if http_only:
+            line = line[len("#HttpOnly_") :]
+        elif not line.strip() or line.startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) != 7:
+            continue
+        domain, _flag, path, secure, expires, name, value = parts
+        try:
+            exp = float(expires)
+        except ValueError:
+            exp = 0.0
+        cookies.append(
+            {
+                "name": name,
+                "value": value,
+                "domain": domain,
+                "path": path or "/",
+                "expires": exp if exp > 0 else -1,  # 0/blank = session cookie
+                "secure": secure.strip().upper() == "TRUE",
+                "httpOnly": http_only,
+            }
+        )
+    return cookies
 
 
 def _classify(url: str, content_type: str = "") -> str | None:
@@ -252,6 +289,16 @@ class BrowserSniffHandler(DownloadHandler):
                     if _is_ad_host(route.request.url)
                     else route.continue_(),
                 )
+                # Login-walled sites (paid fan platforms etc.): browse with the
+                # user's session, same source priority as yt-dlp (per-job paste
+                # > system cookies file). Sniffed requests then carry the auth
+                # cookie, which FORWARDED_HEADERS passes on to the downloader.
+                cookiefile = cookie_opts(ctx.cookiefile).get("cookiefile")
+                if cookiefile:
+                    try:
+                        context.add_cookies(_cookies_for_playwright(cookiefile))
+                    except Exception:
+                        logger.warning("Job %s: cookie injection failed", job.id, exc_info=True)
                 page = context.new_page()
                 page.add_init_script(STEALTH_INIT_JS)
                 # Pop-unders/new tabs are ads; close them so the click that

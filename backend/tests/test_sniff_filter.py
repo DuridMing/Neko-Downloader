@@ -9,6 +9,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from app.handlers.browser_sniff import (
     MEDIA_URL_RE,
     BrowserSniffHandler,
+    _cookies_for_playwright,
     _is_ad_host,
     _reg_domain,
 )
@@ -84,6 +85,31 @@ def test_extract_multiple_and_ignore_non_media():
 
 def test_extract_none_when_no_media_url():
     assert _extract('{"poster":"https://x.com/p.jpg","api":"https://x.com/data.json"}') == []
+
+
+def test_cookies_for_playwright(tmp_path=None):
+    import tempfile
+
+    body = "\n".join(
+        [
+            "# Netscape HTTP Cookie File",
+            "",
+            ".myfans.jp\tTRUE\t/\tTRUE\t1893456000\t_session_id\tabc123",
+            "#HttpOnly_.myfans.jp\tTRUE\t/\tTRUE\t0\tauth_token\tsecret",
+            "not-a-cookie-line",
+        ]
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as f:
+        f.write(body)
+        path = f.name
+    cookies = _cookies_for_playwright(path)
+    assert len(cookies) == 2
+    plain, httponly = cookies
+    assert plain["name"] == "_session_id" and plain["expires"] == 1893456000.0
+    assert not plain["httpOnly"] and plain["secure"]
+    # The #HttpOnly_ line (the one MozillaCookieJar would drop) must survive.
+    assert httponly["name"] == "auth_token" and httponly["value"] == "secret"
+    assert httponly["httpOnly"] and httponly["expires"] == -1  # 0 -> session
 
 
 if __name__ == "__main__":
