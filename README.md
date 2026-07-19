@@ -9,6 +9,7 @@
 - **一行連結即可下載**：自動偵測來源類型，選擇對應的下載策略
 - **`.m3u8` (HLS) 支援**：自動推導 `Origin`/`Referer`（可手動覆寫），ffmpeg 合併為 mp4
 - **多平台支援**：YouTube、Facebook、X (Twitter)、TikTok、Bilibili… 凡 yt-dlp 支援的平台皆可；需要登入的內容可透過 `COOKIES_FILE` 帶入瀏覽器 cookies
+- **myfans 付費內容**：yt-dlp 不支援的付費粉絲平台 [myfans.jp](https://myfans.jp)，透過專屬 handler 直接呼叫其 API、用你的登入 token 下載已訂閱的付費影片（設定見 **[myfans 下載設定指南](docs/MYFANS.md)**）
 - **瀏覽器嗅探回退**：遇到 yt-dlp 不認識的網頁，自動以無頭瀏覽器（Playwright + Chromium）載入頁面、攔截網路流量找出真正的媒體串流（m3u8/mpd/mp4）與其標頭後下載 —— 貼一般網頁連結也能用
 - **反爬蟲規避**：下載一律以真 Chrome 的 TLS/HTTP2 指紋連線（curl_cffi impersonate，過 Cloudflare 等 JA3 指紋封鎖）；嗅探用的無頭瀏覽器會抹除 `navigator.webdriver`、補上 languages/plugins/WebGL 等特徵，降低被 bot 偵測擋下的機率
 - **不長期保留**：下載暫存於磁碟暫存目錄，使用者取走後、TTL 逾時或服務重啟時自動刪除（每次啟動會清空暫存目錄）
@@ -75,6 +76,7 @@ sudo rm /etc/systemd/system/neko-downloader.service
    │◀── WebSocket /ws（進度/狀態推播）◀────────┤
    │                                          ▼
    │                              Handler 註冊表（策略模式 + 失敗自動回退）
+   │                              ├─ MyfansHandler  (myfans API + token)
    │                              ├─ M3u8Handler   (.m3u8 → yt-dlp + ffmpeg)
    │                              ├─ YtDlpPlatformHandler (上千個平台)
    │                              └─ BrowserSniffHandler (無頭瀏覽器嗅探，最後防線)
@@ -189,6 +191,16 @@ cookies 抄出來、手寫成 `cookies.txt`。各平台要抄哪幾個 cookie、
 > Docker 部署使用 cookies 檔時記得掛進容器：`volumes: - ./cookies.txt:/srv/cookies.txt:ro`
 > 並設 `COOKIES_FILE=/srv/cookies.txt`。
 > 平台會頻繁改版／加強反爬蟲，失敗時優先更新 yt-dlp（重建 image 或 `pip install -U yt-dlp`）。
+
+### myfans（付費粉絲平台）
+
+[myfans.jp](https://myfans.jp) 沒有 yt-dlp 解析器，付費串流也要帶登入 token 才拿得到（token
+存在瀏覽器 localStorage，不是自動送出的 cookie），所以貼一般 cookie 或靠嗅探都只會抓到免費預覽。
+
+用法簡述：從開發者工具 **Network → `api.myfans.jp` 請求 → Request Headers 的 `Authorization: Token token=<值>`**
+複製那串值，貼進網頁「進階選項」的 cookie 欄位成 `_mfans_token=<值>`，再貼上貼文連結送出即可。
+handler 會自動挑最高畫質、下載成 mp4，不需你判斷該用哪個 m3u8。**前提是你的帳號已訂閱該貼文**
+（本工具不會繞過付費牆）。完整步驟、取得 token 的細節與疑難排解見 **[myfans 下載設定指南](docs/MYFANS.md)**。
 
 ## 審查日誌
 
