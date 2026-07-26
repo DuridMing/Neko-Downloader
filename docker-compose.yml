@@ -1,13 +1,9 @@
 services:
   neko-downloader:
     build: .
+    # The container always listens on 8000; PORT here is only the host side.
     ports:
-      - "${PORT:-8000}:${PORT:-8000}"
-    # Settings come from .env at the project root (cp .env.example .env);
-    # without one, the defaults baked into the image apply.
-    env_file:
-      - path: .env
-        required: false
+      - "${PORT:-8000}:8000"
     # Temp downloads spill to disk (not RAM) so multi-GB / long videos fit —
     # a RAM tmpfs can't hold a 5.5GB video whose ffmpeg remux peaks at ~2x.
     # Host /var/tmp is disk-backed and already auto-purged by Rocky's
@@ -20,6 +16,19 @@ services:
     volumes:
       - ./logs:/srv/logs:Z
       - /var/tmp/neko_dl:/tmp/neko_dl:Z
+      # The one and only settings file. Mounted rather than injected with
+      # env_file so editing it and restarting is enough (no recreate), and
+      # rather than baked into a layer because it carries ACCESS_PASSWORD and
+      # the Telegram api_hash. /srv is BACKEND_DIR in the image, which is
+      # exactly where config.py looks.
+      # Run `cp .env.example .env` first — a missing source makes Docker
+      # create a directory here instead.
+      - ./.env:/srv/.env:ro,Z
+      # MTProto session = full account access. Mounted (not copied) so it never
+      # enters an image, and persisted so a redeploy doesn't force a fresh CLI
+      # login. Same host path the login script writes, and it keeps its 0600.
+      # Run scripts/telegram-login.py once on the host before the first `up`.
+      - ./backend/.secrets:/srv/.secrets:Z
     # RAM-only alternative (only if you have the memory; a 5.5GB video needs
     # ~12g): drop the /var/tmp line above and uncomment ->
     #   tmpfs:

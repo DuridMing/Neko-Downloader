@@ -1,28 +1,41 @@
 <script setup>
 import { computed } from 'vue'
+import { request } from '../composables/useApi.js'
 
 const props = defineProps({ job: { type: Object, required: true } })
 
+// Tinted status pills, one colour per meaning: blue = working, green = yours
+// to take, red = broken, grey = nothing left to do.
 const STATUS_META = {
-  queued: { label: '排隊中', class: 'bg-gray-500/15 text-gray-400' },
-  downloading: { label: '下載中', class: 'bg-sky-500/15 text-sky-400' },
-  processing: { label: '合併中', class: 'bg-amber-500/15 text-amber-400' },
-  needs_selection: { label: '請選擇', class: 'bg-violet-500/15 text-violet-400' },
-  ready: { label: '可下載', class: 'bg-emerald-500/15 text-emerald-400' },
-  done: { label: '已取走', class: 'bg-gray-500/15 text-gray-500' },
-  failed: { label: '失敗', class: 'bg-rose-500/15 text-rose-400' },
-  cancelled: { label: '已取消', class: 'bg-gray-500/15 text-gray-500' },
-  expired: { label: '已過期', class: 'bg-gray-500/15 text-gray-500' },
+  queued: { label: '排隊中', class: 'bg-fill text-label-2' },
+  downloading: { label: '下載中', class: 'bg-accent-fill text-accent' },
+  processing: { label: '合併中', class: 'bg-orange/15 text-orange' },
+  needs_selection: { label: '請選擇', class: 'bg-purple/15 text-purple' },
+  ready: { label: '可下載', class: 'bg-green/15 text-green' },
+  done: { label: '已取走', class: 'bg-fill text-label-3' },
+  failed: { label: '失敗', class: 'bg-red/15 text-red' },
+  cancelled: { label: '已取消', class: 'bg-fill text-label-3' },
+  expired: { label: '已過期', class: 'bg-fill text-label-3' },
 }
 
 const meta = computed(() => STATUS_META[props.job.status] ?? STATUS_META.queued)
+// Before a handler reports a title there is only the URL, and printing it
+// twice looks like a rendering bug.
+const subtitle = computed(() => (props.job.title ? props.job.url : ''))
 const isActive = computed(() => ['downloading', 'processing'].includes(props.job.status))
+const isPending = computed(() =>
+  ['queued', 'downloading', 'processing', 'needs_selection'].includes(props.job.status)
+)
 
 // Map the raw backend error (a technical, possibly multi-line string) to a
 // plain-language explanation. First matching pattern wins; the raw text stays
 // available in a collapsible <details> for debugging.
 const ERROR_HINTS = [
   [/no space left|disk quota|errno 28/i, '伺服器暫存空間不足 —— 這支影片太大（合併時約需兩倍空間）。請聯絡管理員擴充空間，或改抓較短／較低畫質的版本。'],
+  [/cannot see that channel|join it manually/i, '你的 Telegram 帳號看不到這個頻道。請先用正式的 Telegram App 加入該頻道，本工具不會替你加入。'],
+  [/no Telegram session|log in again|session was revoked/i, '尚未登入 Telegram，或登入已失效。請到右上角「設定」重新登入。'],
+  [/carries no downloadable file|is gone or not visible/i, '這則貼文沒有可下載的檔案，或已被刪除。'],
+  [/flood wait/i, 'Telegram 暫時限流了這個帳號，請等訊息裡的時間過後再試。'],
   [/sign ?in|log ?in|login|private|members?-only|age[- ]?restrict|account/i, '此影片需要登入才能觀看。請展開「進階選項」貼上你的帳號 cookie 後重試。'],
   [/\b403\b|forbidden|access denied/i, '來源拒絕存取（403）—— 可能是防盜連、地區限制，或需要登入 cookie。'],
   [/\b404\b|not found|unable to download webpage|410 gone/i, '找不到影片 —— 連結可能已失效或被移除。'],
@@ -36,9 +49,10 @@ const errorInfo = computed(() => {
   const raw = props.job.error
   if (!raw) return null
   const hint = ERROR_HINTS.find(([re]) => re.test(raw))
-  const summary = hint ? hint[1] : '下載失敗 —— 詳見下方技術細節。'
-  // Only show the raw block separately when it adds info beyond the summary.
-  return { summary, detail: raw.trim() }
+  return {
+    summary: hint ? hint[1] : '下載失敗 —— 詳見下方技術細節。',
+    detail: raw.trim(),
+  }
 })
 
 function formatBytes(b) {
@@ -59,104 +73,117 @@ const downloadedText = computed(() => {
 })
 
 function candidateLabel(c, i) {
-  const name = (() => { try { return new URL(c.url).pathname.split('/').pop() || c.url } catch { return c.url } })()
+  const name = (() => {
+    try {
+      return new URL(c.url).pathname.split('/').pop() || c.url
+    } catch {
+      return c.url
+    }
+  })()
   const size = formatBytes(c.size)
   return `${i + 1}. ${c.kind.toUpperCase()} · ${name}${size ? ` · ${size}` : ''}`
 }
 
 async function select(index) {
-  await fetch(`/api/jobs/${props.job.id}/select`, {
+  await request(`/api/jobs/${props.job.id}/select`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ index }),
   })
 }
 
 async function remove() {
-  await fetch(`/api/jobs/${props.job.id}`, { method: 'DELETE' })
+  await request(`/api/jobs/${props.job.id}`, { method: 'DELETE' })
 }
 </script>
 
 <template>
-  <div class="bg-panel border border-edge rounded-2xl p-5">
-    <div class="flex items-start justify-between gap-4">
+  <div class="card p-4 sm:p-5">
+    <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
-        <p class="font-medium text-sm truncate" :title="job.title || job.url">
+        <p class="text-subhead font-medium truncate" :title="job.title || job.url">
           {{ job.title || job.url }}
         </p>
-        <p class="text-xs text-gray-500 truncate mt-0.5">
-          {{ job.url }}
-          <span class="ml-2 text-gray-600">via {{ job.handler }}</span>
+        <p v-if="subtitle" class="text-footnote text-label-3 truncate mt-0.5" :title="job.url">
+          {{ subtitle }}
         </p>
       </div>
-      <span class="text-xs px-2.5 py-1 rounded-full whitespace-nowrap" :class="meta.class">
+      <span
+        class="shrink-0 text-caption font-semibold px-2.5 py-1 rounded-full"
+        :class="meta.class"
+      >
         {{ meta.label }}
       </span>
     </div>
 
-    <div v-if="isActive" class="mt-4">
-      <div class="h-1.5 bg-surface rounded-full overflow-hidden">
+    <div v-if="isActive" class="mt-3.5">
+      <div class="h-1.5 rounded-full bg-fill overflow-hidden">
         <div
-          class="h-full bg-accent rounded-full transition-all duration-300"
+          class="h-full rounded-full bg-accent transition-[width] duration-500 ease-out"
           :class="{ 'animate-pulse': job.status === 'processing' }"
-          :style="{ width: `${job.progress || 2}%` }"
+          :style="{ width: `${Math.max(job.progress || 0, 2)}%` }"
         ></div>
       </div>
-      <div class="flex justify-between text-xs mt-1.5">
-        <span class="text-gray-400">
+      <div class="flex justify-between gap-3 text-footnote text-label-2 mt-1.5">
+        <span class="truncate">
           {{ (job.progress ?? 0).toFixed(1) }}%
-          <span v-if="downloadedText" class="text-gray-500"> · {{ downloadedText }}</span>
+          <span v-if="downloadedText" class="text-label-3"> · {{ downloadedText }}</span>
         </span>
-        <span v-if="job.speed">
-          <span class="text-emerald-400">{{ job.speed }}</span>
-          <span class="text-sky-400"> · 剩餘 {{ job.eta || '–' }}</span>
+        <span v-if="job.speed" class="shrink-0 tabular-nums">
+          {{ job.speed }}
+          <span v-if="job.eta" class="text-label-3"> · 剩 {{ job.eta }}</span>
         </span>
       </div>
     </div>
 
-    <div v-if="job.status === 'needs_selection' && job.candidates" class="mt-3">
-      <p class="text-xs text-violet-300">
-        這個網頁有多個影片來源，無法自動判斷哪個是正片。請選擇正確的那個：
+    <div v-if="job.status === 'needs_selection' && job.candidates" class="mt-3.5">
+      <p class="text-footnote text-label-2">
+        這個網頁有多個影片來源，無法自動判斷哪個是正片，請選擇：
       </p>
       <div class="flex flex-col gap-1.5 mt-2">
         <button
           v-for="(c, i) in job.candidates"
           :key="c.url"
-          @click="select(i)"
-          class="text-left text-xs bg-surface hover:bg-violet-500/15 border border-edge
-                 hover:border-violet-500/40 rounded-lg px-3 py-2 transition-colors truncate"
+          class="text-left text-footnote bg-fill hover:bg-accent-fill rounded-[0.625rem]
+                 px-3 py-2 truncate transition-colors"
           :title="c.url"
+          @click="select(i)"
         >
           {{ candidateLabel(c, i) }}
         </button>
       </div>
     </div>
 
-    <div v-if="errorInfo" class="mt-3">
-      <p class="text-xs text-rose-400">{{ errorInfo.summary }}</p>
-      <details class="mt-1 group">
-        <summary class="text-[11px] text-gray-500 hover:text-gray-400 cursor-pointer select-none">
+    <div v-if="errorInfo" class="mt-3.5">
+      <p class="text-footnote text-red">{{ errorInfo.summary }}</p>
+      <details class="mt-1.5">
+        <summary class="text-caption text-label-3 cursor-pointer select-none">
           技術細節
         </summary>
-        <pre class="text-[11px] text-gray-500 mt-1 whitespace-pre-wrap break-all
-                    bg-surface rounded-md p-2 max-h-40 overflow-auto">{{ errorInfo.detail }}</pre>
+        <pre class="text-caption text-label-2 mt-1.5 whitespace-pre-wrap break-all
+                    bg-fill rounded-[0.625rem] p-2.5 max-h-40 overflow-auto">{{ errorInfo.detail }}</pre>
       </details>
     </div>
 
-    <div class="flex items-center gap-3 mt-4">
+    <div class="flex items-center gap-2 mt-3">
       <a
         v-if="job.status === 'ready'"
         :href="`/api/jobs/${job.id}/download`"
-        class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium
-               px-4 py-2 rounded-lg transition-colors"
+        class="btn btn-filled !py-2 !px-4 text-footnote"
       >
-        ⬇ 下載{{ sizeText ? ` (${sizeText})` : '' }}
+        <svg viewBox="0 0 24 24" class="w-4 h-4" fill="none" stroke="currentColor"
+             stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 4v12m0 0 4.5-4.5M12 16l-4.5-4.5M4.5 19.5h15" />
+        </svg>
+        下載{{ sizeText ? `（${sizeText}）` : '' }}
       </a>
-      <button
-        @click="remove"
-        class="text-xs text-gray-500 hover:text-rose-400 px-2 py-2 transition-colors"
+      <span
+        v-else-if="sizeText && !isActive"
+        class="text-footnote text-label-3"
       >
-        {{ ['queued', 'downloading', 'processing'].includes(job.status) ? '取消' : '移除' }}
+        {{ sizeText }}
+      </span>
+      <button class="btn btn-plain !text-label-2 !py-1.5 ml-auto text-footnote" @click="remove">
+        {{ isPending ? '取消' : '移除' }}
       </button>
     </div>
   </div>

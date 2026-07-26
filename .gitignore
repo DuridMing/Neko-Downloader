@@ -1,6 +1,5 @@
-# local config (use .env.example / config.example.json as templates)
+# local config (cp .env.example .env)
 .env
-config.json
 
 # dependencies / build artifacts
 node_modules/
@@ -12,8 +11,17 @@ backend/static/
 logs/
 cookies.txt
 
+# Telegram MTProto session = full account access. Never commit, never back up
+# with app data. Created 0600 by scripts/telegram-login.py.
+.secrets/
+*.session
+*.session-journal
+
 # misc
 *.log
 .DS_Store
-CLAUDE.md
-test/
+.pytest_cache/
+# Scratch: broken/oversized download artifacts kept while debugging a case.
+/test/
+# Stray Telegram DC cache written by an older experiment (public keys only).
+/.mtproto

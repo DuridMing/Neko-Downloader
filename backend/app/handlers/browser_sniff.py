@@ -281,14 +281,14 @@ class BrowserSniffHandler(DownloadHandler):
                     locale="en-US",
                     extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
                 )
-                # Abort ad/tracker hosts before they load: no pop-unders to fight
-                # and no ad media in the candidate pool.
-                context.route(
-                    "**/*",
-                    lambda route: route.abort()
-                    if _is_ad_host(route.request.url)
-                    else route.continue_(),
-                )
+                # NB: do NOT install context.route()/request interception here.
+                # Any Playwright route (even URL-scoped) enables the CDP Fetch
+                # domain, which Cloudflare's "Just a moment" challenge detects —
+                # the challenge then never clears and CF-gated sites (missav etc.)
+                # sniff empty. Ad media is already kept out of the candidate pool
+                # by _is_ad_host() in record()/the body scan, and pop-unders are
+                # closed by the context.on("page") handler below, so interception
+                # bought little and broke an entire class of sites.
                 # Login-walled sites (paid fan platforms etc.): browse with the
                 # user's session, same source priority as yt-dlp (per-job paste
                 # > system cookies file). Sniffed requests then carry the auth

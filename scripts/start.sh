@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 啟動 Neko Downloader（前景執行；也是 systemd 服務的進入點）。
-# 設定讀取順序與後端一致：環境變數 > .env > config.json > 預設值。
+# 設定只有一個來源：專案根目錄的 .env（環境變數仍可覆蓋）。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

@@ -9,11 +9,12 @@ let ffmpeg remux to mp4. Non-prefixed playlists fall back to plain yt-dlp.
 """
 
 import logging
+import queue
 import re
 import shutil
 import subprocess
+import threading
 import urllib.request
-from pathlib import Path
 from urllib.parse import urljoin, urlparse
 
 from ..models import DownloadContext, DownloadResult, Job
@@ -118,16 +119,49 @@ def _hls_total_seconds(playlist_text: str) -> float:
     return sum(float(m) for m in re.findall(r"#EXTINF:([0-9.]+)", playlist_text))
 
 
+def _one_line(value: str) -> str:
+    return value.replace("\r", " ").replace("\n", " ").strip()
+
+
 def _ffmpeg_header_args(headers: dict[str, str]) -> list[str]:
     """ffmpeg CLI args carrying the captured request headers (UA + the rest)."""
     args: list[str] = []
     ua = headers.get("User-Agent")
     if ua:
-        args += ["-user_agent", ua]
-    other = "".join(f"{k}: {v}\r\n" for k, v in headers.items() if k.lower() != "user-agent")
+        args += ["-user_agent", _one_line(ua)]
+    # Header values come from the target site via the sniffer: a CRLF in one
+    # would inject extra headers into ffmpeg's request.
+    other = "".join(
+        f"{k}: {_one_line(v)}\r\n"
+        for k, v in headers.items()
+        if k.lower() != "user-agent"
+    )
     if other:
         args += ["-headers", other]
     return args
+
+
+def _poll_lines(proc: subprocess.Popen, tick: float = 1.0):
+    """Yield ffmpeg's stdout lines, plus None every `tick` seconds of silence
+    so the caller can act (cancel) while nothing is being written."""
+    lines: "queue.Queue[str | None]" = queue.Queue()
+
+    def reader() -> None:
+        for line in proc.stdout:
+            lines.put(line)
+        lines.put(None)  # EOF sentinel
+
+    thread = threading.Thread(target=reader, daemon=True)
+    thread.start()
+    while True:
+        try:
+            line = lines.get(timeout=tick)
+        except queue.Empty:
+            yield None
+            continue
+        if line is None:
+            return
+        yield line
 
 
 def _download_ffmpeg_hls(
@@ -148,8 +182,13 @@ def _download_ffmpeg_hls(
     with open(errfile, "w") as ef:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=ef, text=True)
         try:
-            for line in proc.stdout:
+            # Read on a thread and poll: iterating proc.stdout directly blocks
+            # until ffmpeg emits a line, so a stalled transfer could never be
+            # cancelled.
+            for line in _poll_lines(proc):
                 ctx.check_cancelled()
+                if line is None:
+                    continue  # idle tick: the cancel check above is the point
                 line = line.strip()
                 if line.startswith("out_time_us=") and total:
                     try:

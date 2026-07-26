@@ -7,10 +7,39 @@ from urllib.parse import urlparse
 
 import yt_dlp
 
-_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
-
 from ..config import settings
 from ..models import DownloadContext, DownloadResult, Job
+
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+# The per-job cookie jar queue.py writes into the same output dir. Named here
+# so the output-file search can exclude it (see largest_output).
+COOKIEFILE_NAME = "_cookies.txt"
+# yt-dlp leftovers that are never the finished video.
+_NON_OUTPUT_SUFFIXES = (".part", ".ytdl", ".temp")
+
+
+def largest_output(output_dir: Path) -> Path:
+    """The finished download, when yt-dlp's own filename guess was wrong.
+
+    Excludes the job's cookie jar: with no video present it would be the
+    "largest" file, and handing it back would ship the user's credentials to
+    whoever fetches the job.
+    """
+    candidates = sorted(
+        (
+            p
+            for p in output_dir.glob("*")
+            if p.is_file()
+            and p.name != COOKIEFILE_NAME
+            and p.suffix not in _NON_OUTPUT_SUFFIXES
+        ),
+        key=lambda p: p.stat().st_size,
+        reverse=True,
+    )
+    if not candidates:
+        raise RuntimeError("Download produced no output file")
+    return candidates[0]
 
 # Single recent-Chrome UA shared by yt-dlp requests and the browser sniffer so
 # the two never disagree (a mismatch is itself a bot tell).
@@ -195,12 +224,7 @@ def run_ytdlp(
             file_path = Path(ydl.prepare_filename(info))
             # After merge the extension may differ from prepare_filename's guess.
             if not file_path.exists():
-                candidates = sorted(
-                    ctx.output_dir.glob("*"), key=lambda p: p.stat().st_size, reverse=True
-                )
-                if not candidates:
-                    raise RuntimeError("Download produced no output file")
-                file_path = candidates[0]
+                file_path = largest_output(ctx.output_dir)
     except Exception as exc:
         detail = errlog.tail()
         if detail and str(exc) not in detail:

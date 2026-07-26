@@ -1,4 +1,5 @@
 import { reactive, ref } from 'vue'
+import { request } from './useApi.js'
 
 const jobs = reactive(new Map())
 const connected = ref(false)
@@ -7,12 +8,11 @@ let retryDelay = 1000
 
 async function refreshSnapshot() {
   try {
-    const res = await fetch('/api/jobs')
-    const list = await res.json()
+    const list = await request('/api/jobs')
     jobs.clear()
     for (const job of list) jobs.set(job.id, job)
   } catch {
-    /* backend unreachable; the WS retry loop will recover */
+    /* unreachable, or locked — request() flagged that; the retry loop recovers */
   }
 }
 

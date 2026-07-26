@@ -2,7 +2,7 @@
 # 使用方式：
 #   1. 在 .env 設定 MACVLAN_* 變數（見 .env.example）
 #   2. docker compose -f docker-compose.macvlan.yml up --build -d
-#   3. 以 http://<MACVLAN_IP>:<PORT> 存取（不需要 port mapping）
+#   3. 以 http://<MACVLAN_IP>:8000 存取（不需要 port mapping）
 #
 # 注意：macvlan 的先天限制是「宿主機本身無法直接連到容器 IP」，
 # 請從區網其他裝置存取；需要宿主機也能連的話，得另外在宿主機建 macvlan bridge。
@@ -10,11 +10,6 @@
 services:
   neko-downloader:
     build: .
-    # Settings come from .env at the project root (cp .env.example .env);
-    # without one, the defaults baked into the image apply.
-    env_file:
-      - path: .env
-        required: false
     networks:
       lan:
         ipv4_address: ${MACVLAN_IP:-192.168.1.50}
@@ -26,6 +21,11 @@ services:
     volumes:
       - ./logs:/srv/logs:Z
       - /var/tmp/neko_dl:/tmp/neko_dl:Z
+      # See docker-compose.yml for why these two are mounted rather than baked
+      # into the image (ACCESS_PASSWORD / api_hash / MTProto auth key must not
+      # enter a layer). Run `cp .env.example .env` before the first `up`.
+      - ./.env:/srv/.env:ro,Z
+      - ./backend/.secrets:/srv/.secrets:Z
     restart: unless-stopped
 
 networks:

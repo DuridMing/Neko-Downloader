@@ -105,13 +105,18 @@ class JobQueue:
         return job
 
     def mark_done(self, job: Job) -> None:
-        """Called after the user has fetched the file."""
+        """Called after the user has fetched the file.
+
+        Starlette runs a sync BackgroundTask in a threadpool, so this executes
+        off the event loop: scheduling the broadcast must be thread-safe, or
+        the final update reaches the websocket late or not at all.
+        """
         job.status = JobStatus.DONE
         job.completed_at = datetime.now(timezone.utc)
         self._delete_files(job)
         job.file_path = None
         if self._loop:
-            self._loop.create_task(self._broadcast(job))
+            asyncio.run_coroutine_threadsafe(self._broadcast(job), self._loop)
 
     def snapshot(self) -> list[dict]:
         return [j.public_dict() for j in sorted(self.jobs.values(), key=lambda j: j.created_at)]
@@ -132,7 +137,11 @@ class JobQueue:
     async def _run_job(self, job: Job) -> None:
         loop = asyncio.get_running_loop()
 
-        from .handlers._ytdlp_common import derive_stream_headers, write_cookiefile
+        from .handlers._ytdlp_common import (
+            COOKIEFILE_NAME,
+            derive_stream_headers,
+            write_cookiefile,
+        )
 
         output_dir = Path(settings.tmp_dir) / job.id
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -141,7 +150,7 @@ class JobQueue:
         # the in-memory copy. The file is removed in the finally block below.
         cookiefile: Optional[Path] = None
         if job.cookies:
-            cookiefile = output_dir / "_cookies.txt"
+            cookiefile = output_dir / COOKIEFILE_NAME
             try:
                 write_cookiefile(job.cookies, job.url, cookiefile)
             except Exception:

@@ -1,15 +1,200 @@
 @import 'tailwindcss';
 
-@theme {
-  --color-surface: #0d1117;
-  --color-panel: #161b22;
-  --color-edge: #30363d;
-  --color-accent: #7c6cf0;
-  --color-accent-soft: #a39bf5;
+/* Apple HIG in three ideas, applied throughout:
+   clarity   — one type scale (SF's), text that stays legible at every size
+   deference — the chrome recedes: translucent materials, hairline separators,
+               colour used only where it means something
+   depth     — layered surfaces and sheets that slide over the content
+
+   Colours are the system palette. They are declared as plain CSS variables so
+   light/dark is one media query rather than a `dark:` prefix on every class. */
+
+:root {
+  color-scheme: light dark;
+
+  --c-bg: #f2f2f7; /* systemGroupedBackground */
+  --c-card: #ffffff;
+  --c-card-2: #f7f7fa; /* nested fill inside a card */
+  --c-fill: rgba(118, 118, 128, 0.12); /* tertiarySystemFill */
+  --c-separator: rgba(60, 60, 67, 0.18);
+  --c-label: #1c1c1e;
+  --c-label-2: rgba(60, 60, 67, 0.6); /* secondaryLabel */
+  --c-label-3: rgba(60, 60, 67, 0.35); /* tertiaryLabel */
+  --c-accent: #007aff;
+  --c-accent-fill: rgba(0, 122, 255, 0.12);
+  --c-green: #34c759;
+  --c-red: #ff3b30;
+  --c-orange: #ff9500;
+  --c-purple: #af52de;
+  --c-material: rgba(249, 249, 251, 0.72); /* chrome over content */
+  --c-scrim: rgba(0, 0, 0, 0.28);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+  --shadow-sheet: 0 24px 64px rgba(0, 0, 0, 0.24);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-bg: #000000;
+    --c-card: #1c1c1e;
+    --c-card-2: #2c2c2e;
+    --c-fill: rgba(118, 118, 128, 0.24);
+    --c-separator: rgba(84, 84, 88, 0.6);
+    --c-label: #f5f5f7;
+    --c-label-2: rgba(235, 235, 245, 0.6);
+    --c-label-3: rgba(235, 235, 245, 0.3);
+    --c-accent: #0a84ff;
+    --c-accent-fill: rgba(10, 132, 255, 0.18);
+    --c-green: #30d158;
+    --c-red: #ff453a;
+    --c-orange: #ff9f0a;
+    --c-purple: #bf5af2;
+    --c-material: rgba(30, 30, 32, 0.72);
+    --c-scrim: rgba(0, 0, 0, 0.5);
+    --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.3);
+    --shadow-sheet: 0 24px 64px rgba(0, 0, 0, 0.6);
+  }
+}
+
+@theme inline {
+  --color-bg: var(--c-bg);
+  --color-card: var(--c-card);
+  --color-card-2: var(--c-card-2);
+  --color-fill: var(--c-fill);
+  --color-separator: var(--c-separator);
+  --color-label: var(--c-label);
+  --color-label-2: var(--c-label-2);
+  --color-label-3: var(--c-label-3);
+  --color-accent: var(--c-accent);
+  --color-accent-fill: var(--c-accent-fill);
+  --color-green: var(--c-green);
+  --color-red: var(--c-red);
+  --color-orange: var(--c-orange);
+  --color-purple: var(--c-purple);
+  --color-material: var(--c-material);
+
+  /* SF's type scale, the sizes Apple actually ships. */
+  --text-caption: 0.6875rem;
+  --text-footnote: 0.8125rem;
+  --text-subhead: 0.9375rem;
+  --text-body: 1.0625rem;
+  --text-title3: 1.25rem;
+  --text-title2: 1.375rem;
+  --text-large: 2rem;
+
+  --radius-control: 0.75rem;
+  --radius-card: 1.125rem;
+  --radius-sheet: 1.25rem;
+
+  /* Apple's sheet curve: quick to leave, slow to settle. */
+  --ease-sheet: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+html {
+  background: var(--c-bg);
 }
 
 body {
-  background: var(--color-surface);
-  color: #e6edf3;
-  font-family: 'Inter', 'Noto Sans TC', system-ui, sans-serif;
+  background: var(--c-bg);
+  color: var(--c-label);
+  font-family:
+    -apple-system, BlinkMacSystemFont, 'SF Pro Text', 'Helvetica Neue', 'Segoe UI',
+    'Noto Sans TC', 'PingFang TC', 'Microsoft JhengHei', system-ui, sans-serif;
+  font-size: 1.0625rem;
+  line-height: 1.47;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  /* Tabular figures keep percentages and sizes from jittering as they count. */
+  font-variant-numeric: tabular-nums;
+}
+
+/* Visible only for keyboard users, which is the point. Fields are excluded
+   because their own border turns accent-blue on focus; the ring would draw a
+   second one around it. `:not()` rather than an override in the utility layer:
+   unlayered rules like this one win over @layer utilities regardless. */
+:focus-visible:not(.field) {
+  outline: 2px solid var(--c-accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+@utility field {
+  width: 100%;
+  background: var(--c-fill);
+  color: var(--c-label);
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  padding: 0.6875rem 0.875rem;
+  font-size: 0.9375rem;
+  transition: border-color 0.2s, background 0.2s;
+
+  &::placeholder {
+    color: var(--c-label-3);
+  }
+  /* The field's own border turns accent-blue on focus, so the global focus
+     ring would just draw a second ring around it. */
+  &:focus,
+  &:focus-visible {
+    outline: none;
+    border-color: var(--c-accent);
+    background: var(--c-card);
+  }
+}
+
+@utility btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  border-radius: var(--radius-control);
+  padding: 0.6875rem 1.125rem;
+  font-size: 0.9375rem;
+  font-weight: 590; /* SF's semibold */
+  white-space: nowrap;
+  transition: transform 0.12s var(--ease-sheet), opacity 0.2s, background 0.2s;
+
+  /* The press, not the hover, is the feedback — as on a touch device. */
+  &:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  &:disabled {
+    opacity: 0.4;
+  }
+}
+
+@utility btn-filled {
+  background: var(--c-accent);
+  color: #fff;
+}
+
+@utility btn-tinted {
+  background: var(--c-accent-fill);
+  color: var(--c-accent);
+}
+
+@utility btn-plain {
+  background: transparent;
+  color: var(--c-accent);
+  padding-inline: 0.5rem;
+}
+
+@utility card {
+  background: var(--c-card);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+}
+
+/* Honour the accessibility settings instead of overriding them. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :root {
+    --c-material: var(--c-card);
+  }
 }

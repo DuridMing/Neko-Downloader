@@ -1,0 +1,8 @@
+# Test-only extras. Not installed in the image — the app never imports these.
+#   .venv/bin/pip install -r requirements-dev.txt
+-r requirements.txt
+pytest>=8.0
+# FastAPI's TestClient is a thin wrapper over httpx; without it the HTTP layer
+# (auth middleware, the /ws gate, the job routes) can only be tested by hand.
+httpx>=0.27
+pyflakes>=3.2

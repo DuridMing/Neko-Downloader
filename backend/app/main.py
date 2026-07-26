@@ -3,9 +3,11 @@ from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from . import auth
 from .api import router
 from .config import BACKEND_DIR
 from .queue import job_queue
@@ -40,6 +42,19 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Neko Downloader", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def require_password(request: Request, call_next):
+    """The gate. Only covers HTTP — Starlette middleware never sees websocket
+    connections, so /ws checks the same cookie itself in api.py."""
+    if auth.needs_auth(request.url.path) and not auth.cookie_ok(
+        request.cookies.get(auth.COOKIE_NAME)
+    ):
+        return JSONResponse({"detail": "需要密碼"}, status_code=401)
+    return await call_next(request)
+
+
 app.include_router(router)
 
 if STATIC_DIR.is_dir():

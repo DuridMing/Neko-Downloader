@@ -5,6 +5,11 @@ backend/static
 .git
 *.md
 .env
-config.json
 logs
 cookies.txt
+# MTProto auth key: must never end up in an image layer (layers are shipped
+# and cached). It is bind-mounted at runtime instead — see docker-compose.yml.
+.secrets
+**/.secrets
+*.session
+*.session-journal
