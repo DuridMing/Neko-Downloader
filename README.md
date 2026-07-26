@@ -52,6 +52,67 @@ docker compose -f docker-compose.macvlan.yml up --build -d
 
 > macvlan 先天限制：**宿主機本身無法直接連到容器的 macvlan IP**，請從其他裝置存取；若宿主機也要連，需另建宿主機端的 macvlan bridge interface。`MACVLAN_IP` 請選在 DHCP 派發範圍之外，避免 IP 衝突。
 
+## 更新既有部署
+
+程式碼從 git 拉，設定與 session 都在掛載進去的檔案裡，所以更新不會動到你的登入狀態。
+
+```bash
+cd /path/to/neko_downloader
+git pull
+ls -l .env || cp .env.example .env      # v2 起這是唯一的設定檔
+docker compose up -d --build            # 前端也在 image 內建置，主機不需要 node
+docker compose logs -f --tail=50        # Ctrl-C 離開
+```
+
+驗證：`curl -si localhost:8000/api/jobs | head -1`（有設密碼→401；`ACCESS_PASSWORD=NONE`→200）。
+要回到上一版：`git checkout HEAD~1 && docker compose up -d --build`。
+暫存目錄與佇列本來就是重啟即清，回滾不會留下髒資料；`backend/.secrets/` 不受影響。
+
+> **Podman 使用者**（含 Quadlet / `podman-compose` / macvlan）請看
+> **[Podman 更新指南](docs/PODMAN.md)** —— Quadlet 的 `.build` 單元不會自動重跑、
+> 掛載要自己對齊、`restart: unless-stopped` 不生效，這些坑都在那裡。
+
+## 從舊版（`config.json`）升級
+
+v2 起設定只讀 `.env`，`config.json` **會被完全忽略**——沒有警告。舊機器上先轉一次：
+
+```bash
+cd /path/to/neko_downloader
+cp -a config.json config.json.bak        # 先留底，裡面有 api_hash
+python3 - <<'EOF'
+import json, pathlib, re
+
+cfg = json.loads(pathlib.Path("config.json").read_text(encoding="utf-8"))
+env = pathlib.Path(".env")
+if not env.exists():
+    env.write_text(pathlib.Path(".env.example").read_text(encoding="utf-8"), encoding="utf-8")
+
+lines = env.read_text(encoding="utf-8").splitlines()
+moved = []
+for key, value in cfg.items():
+    if value in ("", 0, None):
+        continue                       # 沒設定的就別搬
+    k, v = key.upper(), str(value)
+    for i, line in enumerate(lines):
+        if re.match(rf"^#?\s*{k}=", line):
+            lines[i] = f"{k}={v}"      # 取代（含原本被註解掉的那行）
+            break
+    else:
+        lines.append(f"{k}={v}")
+    moved.append(k)
+env.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print("已搬移：", ", ".join(moved))
+EOF
+chmod 600 .env
+grep -vE '^\s*#|^\s*$' .env          # 檢查一遍再啟動
+```
+
+確認無誤後 `rm config.json`（`.bak` 建議留著，直到新版跑順）。另外兩點：
+
+- **`ACCESS_PASSWORD` 預設是 `NONE`（不驗證）**，轉檔不會幫你設；想啟用就改成一組密碼。
+- `PORT` 在 Docker 下現在只決定**發佈到宿主機的埠**，容器內固定 8000。舊的 `PORT=9000`
+  行為不變（`9000:8000`），不用改。
+
 ## 直接安裝在主機（不用 Docker）
 
 需求：Python 3.12+、Node.js 20+（建置前端用）、ffmpeg。（Docker image 用 Python 3.12）
@@ -126,16 +187,16 @@ Docker 會在該位置建出一個目錄。）
 
 | 設定（`.env`） | 預設 | 說明 |
 |---|---|---|
-| `MAX_CONCURRENT` / `max_concurrent` | `2` | 同時下載的任務數 |
-| `MAX_QUEUE_SIZE` / `max_queue_size` | `50` | 佇列上限，滿了回 429 |
-| `FILE_TTL_SECONDS` / `file_ttl_seconds` | `3600` | 完成檔案的保留秒數，逾時自動刪除（失敗/取消的記錄同樣依此 TTL 從佇列消失） |
-| `CLEANUP_INTERVAL_SECONDS` / `cleanup_interval_seconds` | `60` | 清理排程的掃描間隔（秒） |
-| `SNIFF_TIMEOUT_SECONDS` / `sniff_timeout_seconds` | `20` | 瀏覽器嗅探等待媒體請求出現的上限（秒） |
-| `COOKIES_FILE` / `cookies_file` | （空） | Netscape 格式 cookies 檔，抓需要登入的內容用 |
-| `COOKIES_FROM_BROWSER` / `cookies_from_browser` | （空） | 直接讀本機瀏覽器登入狀態，如 `firefox`、`chrome:Profile 1`（`COOKIES_FILE` 優先） |
-| `AUDIT_LOG_FILE` / `audit_log_file` | `logs/audit.log` | 審查日誌路徑（相對於 `backend/`），空字串停用檔案輸出 |
+| `MAX_CONCURRENT` | `2` | 同時下載的任務數 |
+| `MAX_QUEUE_SIZE` | `50` | 佇列上限，滿了回 429 |
+| `FILE_TTL_SECONDS` | `3600` | 完成檔案的保留秒數，逾時自動刪除（失敗/取消的記錄同樣依此 TTL 從佇列消失） |
+| `CLEANUP_INTERVAL_SECONDS` | `60` | 清理排程的掃描間隔（秒） |
+| `SNIFF_TIMEOUT_SECONDS` | `20` | 瀏覽器嗅探等待媒體請求出現的上限（秒） |
+| `COOKIES_FILE` | （空） | Netscape 格式 cookies 檔，抓需要登入的內容用 |
+| `COOKIES_FROM_BROWSER` | （空） | 直接讀本機瀏覽器登入狀態，如 `firefox`、`chrome:Profile 1`（`COOKIES_FILE` 優先） |
+| `AUDIT_LOG_FILE` | `logs/audit.log` | 審查日誌路徑（相對於 `backend/`），空字串停用檔案輸出 |
 | `ACCESS_PASSWORD` | `NONE` | 存取密碼，見下方 **[存取密碼](#存取密碼)**。`NONE`＝不驗證 |
-| `TMP_DIR` / `tmp_dir` | `/tmp/neko_dl` | 容器內暫存目錄（compose 已把 host `/var/tmp/neko_dl` 掛進來；啟動時會清空） |
+| `TMP_DIR` | `/tmp/neko_dl` | 容器內暫存目錄（compose 已把 host `/var/tmp/neko_dl` 掛進來；啟動時會清空） |
 | `PORT` | `8000` | 主機直裝＝實際監聽埠；Docker＝發佈到宿主機的埠（容器內固定 8000） |
 
 > **暫存放磁碟，不放 RAM**：早期版本把暫存掛在 tmpfs（記憶體），但長影片放不下 —— 合併成 mp4 的最後一步

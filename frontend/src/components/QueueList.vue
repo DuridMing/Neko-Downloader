@@ -5,8 +5,14 @@ import { useWebSocket } from '../composables/useWebSocket.js'
 
 const { jobs } = useWebSocket()
 
+// Ready-to-collect floats to the top; everything else oldest-first, so newly
+// submitted jobs land at the bottom and the user never scrolls to act.
 const sorted = computed(() =>
-  [...jobs.values()].sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+  [...jobs.values()].sort(
+    (a, b) =>
+      (b.status === 'ready') - (a.status === 'ready') ||
+      new Date(a.created_at) - new Date(b.created_at)
+  )
 )
 const activeCount = computed(
   () =>

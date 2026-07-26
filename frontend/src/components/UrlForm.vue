@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref } from 'vue'
+import { computed, nextTick, ref } from 'vue'
 import { request } from '../composables/useApi.js'
 import { useCookies } from '../composables/useCookies.js'
 import { useTelegram } from '../composables/useTelegram.js'
@@ -14,6 +14,7 @@ const referer = ref('')
 const showAdvanced = ref(Boolean(cookies.value))
 const submitting = ref(false)
 const error = ref('')
+const cookieBox = ref(null)
 
 // Catch the one mistake this UI can predict: a Telegram link with nobody
 // logged in. Say it before the job fails, next to the field that caused it.
@@ -22,6 +23,24 @@ const needsTelegramLogin = computed(() => {
   if (!/^https?:\/\/(www\.)?t(elegram)?\.me\//i.test(value)) return false
   return telegram.loaded && !telegram.has_session
 })
+
+// myfans keeps its token in localStorage, so the browser never sends it and a
+// plain cookie paste doesn't help — the token has to be typed in by hand under
+// the `_mfans_token=` label the handler looks for. Nobody guesses that, so say
+// it here rather than hiding it in a settings field or a help page.
+const needsMyfansToken = computed(() => {
+  if (!/^https?:\/\/(www\.)?myfans\.jp\//i.test(url.value.trim())) return false
+  return !cookies.value.includes('_mfans_token=')
+})
+
+async function prefillMyfansToken() {
+  showAdvanced.value = true
+  if (!cookies.value.trim()) cookies.value = '_mfans_token='
+  await nextTick()
+  cookieBox.value?.focus()
+  // Caret after the label so the paste lands in the right place.
+  cookieBox.value?.setSelectionRange(cookies.value.length, cookies.value.length)
+}
 
 async function submit() {
   if (!url.value.trim() || submitting.value) return
@@ -73,6 +92,20 @@ async function submit() {
         </button>
       </div>
 
+      <div
+        v-if="needsMyfansToken"
+        class="flex items-center gap-3 rounded-[0.75rem] bg-accent-fill px-3.5 py-2.5"
+      >
+        <p class="text-footnote text-label flex-1">
+          myfans 付費影片要填 <code class="font-mono">_mfans_token=&lt;token&gt;</code>，
+          否則只抓到免費預覽片。token 在 F12 → Network → <code class="font-mono">api.myfans.jp</code>
+          請求的 Authorization 標頭裡（<code class="font-mono">Token token=</code> 後面那串）。
+        </p>
+        <button type="button" class="btn btn-plain !py-0" @click="prefillMyfansToken">
+          去填
+        </button>
+      </div>
+
       <button
         type="button"
         class="flex items-center gap-1 text-footnote text-label-2 hover:text-label transition-colors"
@@ -114,6 +147,7 @@ async function submit() {
               </button>
             </div>
             <textarea
+              ref="cookieBox"
               v-model="cookies"
               rows="3"
               spellcheck="false"
